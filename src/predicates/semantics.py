@@ -5,7 +5,7 @@
 # File name: predicates/semantics.py
 
 """Semantic analysis of predicate-logic expressions."""
-
+import itertools
 from typing import FrozenSet, Generic, TypeVar
 
 from src.logic_utils import frozendict
@@ -152,7 +152,17 @@ class Model(Generic[T]):
         assert term.variables().issubset(assignment.keys())
         for function, arity in term.functions():
             assert function in self.function_interpretations and self.function_arities[function] == arity
-        # Task 7.7
+
+        if is_constant(term.root):
+            return self.constant_interpretations[term.root]
+        elif is_variable(term.root):
+            return assignment[term.root]
+        else:
+            assert is_function(term.root)
+            arguments = []
+            for argument in term.arguments:
+                arguments.append(self.evaluate_term(argument, assignment))
+            return self.function_interpretations[term.root][tuple(arguments)]
 
     def evaluate_formula(self, formula: Formula, assignment: Mapping[str, T] = frozendict()) -> bool:
         """Calculates the truth value of the given formula in the current model
@@ -177,7 +187,44 @@ class Model(Generic[T]):
             assert function in self.function_interpretations and self.function_arities[function] == arity
         for relation, arity in formula.relations():
             assert relation in self.relation_interpretations and self.relation_arities[relation] in {-1, arity}
-        # Task 7.8
+
+        if is_equality(formula.root):
+            left = self.evaluate_term(formula.arguments[0], assignment)
+            right = self.evaluate_term(formula.arguments[1], assignment)
+            return left == right
+        elif is_relation(formula.root):
+            arguments = []
+            for argument in formula.arguments:
+                arguments.append(self.evaluate_term(argument, assignment))
+            return tuple(arguments) in self.relation_interpretations[formula.root]
+        elif is_unary(formula.root):
+            # unary (negation)
+            assert formula.root == "~"
+            return not self.evaluate_formula(formula.first, assignment)
+        elif is_binary(formula.root):
+            # binary
+            left = self.evaluate_formula(formula.first, assignment)
+            right = self.evaluate_formula(formula.second, assignment)
+            if formula.root == "&":
+                return left and right
+            elif formula.root == "|":
+                return left or right
+            else:
+                assert formula.root == "->"
+                return not left or right
+        elif is_quantifier(formula.root):
+            var = formula.variable
+            for el in self.universe:
+                new_assignment = dict(assignment)
+                new_assignment[var] = el
+                if formula.root == "A":
+                    if not self.evaluate_formula(formula.statement, new_assignment):
+                        return False
+                else:
+                    assert formula.root == "E"
+                    if self.evaluate_formula(formula.statement, new_assignment):
+                        return True
+            return formula.root == "A"
 
     def is_model_of(self, formulas: AbstractSet[Formula]) -> bool:
         """Checks if the current model is a model of the given formulas.
@@ -198,4 +245,19 @@ class Model(Generic[T]):
                 assert function in self.function_interpretations and self.function_arities[function] == arity
             for relation, arity in formula.relations():
                 assert relation in self.relation_interpretations and self.relation_arities[relation] in {-1, arity}
-        # Task 7.9
+
+        for formula in formulas:
+            free = formula.free_variables()
+
+            if len(free) == 0:
+                if not self.evaluate_formula(formula):
+                    return False
+                else:
+                    continue
+
+            for values in itertools.product(self.universe, repeat=len(free)):
+                assignment = dict(zip(free, values))
+                if not self.evaluate_formula(formula, assignment):
+                    return False
+
+        return True
